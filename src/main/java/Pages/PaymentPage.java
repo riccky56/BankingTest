@@ -13,6 +13,8 @@ public class PaymentPage extends BasePage {
 	    private static final By SUBMIT_BUTTON = By.id("submitPayment");
 	    private static final By SUCCESS_MESSAGE = By.className("payment-confirmation");
 	    private static final By ERROR_MESSAGE = By.className("error-alert");
+	    private static final By accountType = By.className("account-name");
+	    
 	    
 	    // Dynamic element: Processing spinner
 	    private static final By PROCESSING_SPINNER = By.className("spinner");
@@ -42,6 +44,13 @@ public class PaymentPage extends BasePage {
 	        dropdown.selectByVisibleText(type);
 	        return this;
 	    }	
+	    
+	    public PaymentPage selectAccount(String account) {
+	    	 Select dropdown2 = new Select(driver.findElement(accountType));
+		        dropdown2.selectByVisibleText(account);
+		        return this;
+	    	
+	    }
 	    
 	    public void submitPayment() {
 	        click(SUBMIT_BUTTON);

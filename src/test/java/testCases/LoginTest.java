@@ -1,6 +1,7 @@
 package testCases;
 
 import java.io.IOException;
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -8,6 +9,7 @@ import java.time.Duration;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
+import org.openqa.selenium.chrome.ChromeDriverService;
 import org.openqa.selenium.SessionNotCreatedException;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
@@ -29,11 +31,16 @@ public class LoginTest {
 	}
 
 	private WebDriver createDriverWithFallback() {
+		ChromeDriverService service = new ChromeDriverService.Builder()
+				.withVerbose(true)
+				.withLogFile(new File("target/chromedriver.log"))
+				.build();
+
 		try {
-			return new ChromeDriver(buildOptions(false));
+			return new ChromeDriver(service, buildOptions(false));
 		} catch (SessionNotCreatedException primaryFailure) {
 			// Fallback for machines where regular Chrome UI startup fails.
-			return new ChromeDriver(buildOptions(true));
+			return new ChromeDriver(service, buildOptions(true));
 		}
 	}
 
@@ -86,15 +93,13 @@ public class LoginTest {
 
 		if (tempProfile != null) {
 			try {
-				Files.walk(tempProfile)
-					.sorted((a, b) -> b.compareTo(a))
-					.forEach(path -> {
-						try {
-							Files.deleteIfExists(path);
-						} catch (IOException ignored) {
-							// Best effort cleanup.
-						}
-					});
+				Files.walk(tempProfile).sorted((a, b) -> b.compareTo(a)).forEach(path -> {
+					try {
+						Files.deleteIfExists(path);
+					} catch (IOException ignored) {
+						// Best effort cleanup.
+					}
+				});
 			} catch (IOException ignored) {
 				// Best effort cleanup.
 			}
