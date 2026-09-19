@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "title": "Example successful payment response",
+  "description": "Based on PaymentAPITest assertions; verify against the approved sandbox contract.",
+  "type": "object",
+  "required": ["status", "transactionId", "amount", "timestamp", "statusDetails"],
+  "properties": {
+    "status": { "type": "string", "enum": ["CONFIRMED"] },
+    "transactionId": { "type": "string", "pattern": "^TXN[0-9]{10}$" },
+    "amount": { "type": "number", "minimum": 0, "exclusiveMinimum": true },
+    "timestamp": { "type": "string", "minLength": 1 },
+    "statusDetails": {
+      "type": "object",
+      "required": ["processedAt", "processedBy"],
+      "properties": {
+        "processedAt": { "type": "string", "minLength": 1 },
+        "processedBy": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

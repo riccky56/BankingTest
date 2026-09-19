@@ -1,21 +1,44 @@
 package Tests;
 
+import static io.restassured.RestAssured.given;
+import static io.restassured.module.jsv.JsonSchemaValidator.matchesJsonSchemaInClasspath;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.hamcrest.Matchers.notNullValue;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertNotNull;
+
+import java.util.UUID;
+
+import org.json.JSONObject;
+import org.testng.SkipException;
 import org.testng.annotations.BeforeClass;
+import org.testng.annotations.Test;
+
+import io.restassured.http.ContentType;
+import io.restassured.specification.RequestSpecification;
 
 public class PaymentAPITest {
-	    private static final String BASE_URL = "https://api.lloyds.com";
-	    private static String authToken;
+	    private String baseUrl;
+	    private String authToken;
 	    
 	    @BeforeClass
-	    public static void setUp() {
-	        // Get authentication token
-	        authToken = getAuthToken("testuser", "password");
-	        
-	        RestAssured.baseURI = BASE_URL;
+	    public void setUp() {
+	        // Use an approved sandbox implementing the example contract below.
+	        baseUrl = requiredEnvironmentVariable("PAYMENT_API_BASE_URL");
+	        String username = requiredEnvironmentVariable("PAYMENT_API_USERNAME");
+	        String password = requiredEnvironmentVariable("PAYMENT_API_PASSWORD");
+	        authToken = getAuthToken(username, password);
+	        assertNotNull(authToken, "Authentication response must contain a token");
+	        assertFalse(authToken.isBlank(), "Authentication token must not be blank");
 	    }
 	    
-	    private static String getAuthToken(String username, String password) {
+	    private String getAuthToken(String username, String password) {
 	        return given()
+	            .baseUri(baseUrl)
 	            .contentType(ContentType.JSON)
 	            .body(new JSONObject()
 	                .put("username", username)
@@ -28,22 +51,40 @@ public class PaymentAPITest {
 	            .extract()
 	            .path("token");
 	    }
-	    
+
+	    private static String requiredEnvironmentVariable(String name) {
+	        String value = System.getenv(name);
+	        if (value == null || value.isBlank()) {
+	            throw new SkipException("Set " + name + " for an approved payment API sandbox before running these tests.");
+	        }
+	        return value;
+	    }
+
+	    private RequestSpecification paymentRequest() {
+	        return given()
+	            .baseUri(baseUrl)
+	            .header("Authorization", "Bearer " + authToken)
+	            .contentType(ContentType.JSON);
+	    }
+
+	    private PaymentRequest validPayment(double amount) {
+	        return new PaymentRequest()
+	            .setRecipientName("John Doe")
+	            .setRecipientAccount("12345678")
+	            .setAccountId("ACC123")
+	            .setAmount(amount)
+	            .setCurrency("GBP")
+	            .setPaymentType("FasterPayment");
+	    }
+
 	    @Test(groups = {"api", "payment"})
 	    public void testSuccessfulPaymentTransfer() {
 	        // Arrange: Build payment request
-	        PaymentRequest request = new PaymentRequest()
-	            .setRecipientName("John Doe")
-	            .setRecipientAccount("12345678")
-	            .setAmount(500.00)
-	            .setCurrency("GBP")
-	            .setPaymentType("FasterPayment");
+	        PaymentRequest request = validPayment(500.00);
 	        
 	        // Act: Make API call
-	        given()
-	            .header("Authorization", "Bearer " + authToken)
-	            .contentType(ContentType.JSON)
-	            .body(request)
+	        paymentRequest()
+	            .body(request.toJson())
 	        .when()
 	            .post("/payments/transfer")
 	        .then()
@@ -59,10 +100,8 @@ public class PaymentAPITest {
 	    
 	    @Test(groups = {"api", "payment"})
 	    public void testPaymentValidationErrors() {
-	        given()
-	            .header("Authorization", "Bearer " + authToken)
-	            .contentType(ContentType.JSON)
-	            .body(new PaymentRequest().setAmount(-100)) // Invalid
+	        paymentRequest()
+	            .body(validPayment(-100).toJson()) // Only the amount is invalid
 	        .when()
 	            .post("/payments/transfer")
 	        .then()
@@ -74,12 +113,8 @@ public class PaymentAPITest {
 	    
 	    @Test(groups = {"api", "payment"})
 	    public void testInsufficientFundsScenario() {
-	        given()
-	            .header("Authorization", "Bearer " + authToken)
-	            .contentType(ContentType.JSON)
-	            .body(new PaymentRequest()
-	                .setAmount(999999.99) // Account doesn't have this much
-	                .setAccountId("ACC123"))
+	        paymentRequest()
+	            .body(validPayment(999999.99).toJson()) // Sandbox account must have insufficient funds
 	        .when()
 	            .post("/payments/transfer")
 	        .then()
@@ -89,19 +124,17 @@ public class PaymentAPITest {
 	    }
 	    
 	    @Test(groups = {"api", "payment"})
-	    public void testConcurrentPaymentAttempts() {
-	        // For Lloyds: Test duplicate transaction detection
-	        String paymentRequest = new PaymentRequest()
-	            .setIdempotencyKey("unique-key-123")
-	            .setAmount(250.00)
-	            .toString();
+	    public void testDuplicatePaymentAttempts() {
+	        // Sequential replay tests idempotency, not concurrent execution.
+	        String idempotencyKey = UUID.randomUUID().toString();
+	        String requestJson = validPayment(250.00)
+	            .setIdempotencyKey(idempotencyKey)
+	            .toJson();
 	        
 	        // First request succeeds
-	        String transactionId1 = given()
-	            .header("Authorization", "Bearer " + authToken)
-	            .header("Idempotency-Key", "unique-key-123")
-	            .contentType(ContentType.JSON)
-	            .body(paymentRequest)
+	        String transactionId1 = paymentRequest()
+	            .header("Idempotency-Key", idempotencyKey)
+	            .body(requestJson)
 	        .when()
 	            .post("/payments/transfer")
 	        .then()
@@ -110,11 +143,9 @@ public class PaymentAPITest {
 	            .path("transactionId");
 	        
 	        // Duplicate request with same idempotency key returns same result
-	        String transactionId2 = given()
-	            .header("Authorization", "Bearer " + authToken)
-	            .header("Idempotency-Key", "unique-key-123")
-	            .contentType(ContentType.JSON)
-	            .body(paymentRequest)
+	        String transactionId2 = paymentRequest()
+	            .header("Idempotency-Key", idempotencyKey)
+	            .body(requestJson)
 	        .when()
 	            .post("/payments/transfer")
 	        .then()
@@ -122,17 +153,17 @@ public class PaymentAPITest {
 	            .extract()
 	            .path("transactionId");
 	        
-	        assertEquals(transactionId1, transactionId2, 
+	        assertNotNull(transactionId1, "First response must contain a transaction ID");
+	        assertFalse(transactionId1.isBlank(), "Transaction ID must not be blank");
+	        assertEquals(transactionId2, transactionId1,
 	            "Duplicate request should return same transaction ID");
 	    }
 	    
 	    @Test(groups = {"api", "payment", "contract"})
 	    public void testPaymentResponseSchema() {
 	        // Contract testing - ensure response structure is stable
-	        given()
-	            .header("Authorization", "Bearer " + authToken)
-	            .contentType(ContentType.JSON)
-	            .body(new PaymentRequest().setAmount(100.00))
+	        paymentRequest()
+	            .body(validPayment(100.00).toJson())
 	        .when()
 	            .post("/payments/transfer")
 	        .then()
@@ -143,39 +174,4 @@ public class PaymentAPITest {
 	            .body("statusDetails.processedAt", notNullValue())
 	            .body("statusDetails.processedBy", notNullValue());
 	    }
-	}
-
-	// Test data class
-	public class PaymentRequest {
-	    private String recipientName;
-	    private String recipientAccount;
-	    private Double amount;
-	    private String currency = "GBP";
-	    private String paymentType = "FasterPayment";
-	    private String idempotencyKey;
-	    
-	    // Fluent setters
-	    public PaymentRequest setRecipientName(String name) {
-	        this.recipientName = name;
-	        return this;
-	    }
-	    
-	    public PaymentRequest setAmount(Double amount) {
-	        this.amount = amount;
-	        return this;
-	    }
-	    
-	    // ... more setters
-	    
-	    @Override
-	    public String toString() {
-	        return new JSONObject()
-	            .put("recipientName", recipientName)
-	            .put("recipientAccount", recipientAccount)
-	            .put("amount", amount)
-	            .put("currency", currency)
-	            .put("paymentType", paymentType)
-	            .toString();
-	    }
-	}
 }
